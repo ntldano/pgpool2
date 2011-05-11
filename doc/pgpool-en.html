@@ -1,7 +1,10 @@
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 <html><head>
 <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
-<link rel="stylesheet" href="pgpool-en_files/pgpool.css" type="text/css">
+<style type="text/css" media="all">
+ @import "pgpool-en_files/pgpool.css";
+</style>
+<link rel="stylesheet" href="pgpool-en_files/pgpool-print.css" type="text/css" media="print">
 <title>pgpool-II user manual</title>
 </head>
 
@@ -66,7 +69,7 @@ connection overhead, and improves system's overall throughput.</p>
 
 <li>Replication</li>
     <p>pgpool-II can manage multiple PostgreSQL servers. Activating the
-replication feature makes it possible to create a realtime backup on 2 or
+replication feature makes it possible to create a realtime backup on two or
 more PostgreSQL clusters, so that the service can continue without interruption
 if one of those clusters fails.</p>
 
@@ -83,8 +86,8 @@ queries at the same time.</p>
 <li>Limiting Exceeding Connections</li>
     <p>There is a limit on the maximum number of concurrent
 connections with PostgreSQL, and new connections are rejected when this
-number is reached. Raising this maximum number of connections, however,
-increases resource consumption and has a negative impact on overall system
+number is reached. Raising this maximum number of connections
+increases resource consumption and has a negative impact on overall system 
 performance. pgpool-II also has a limit on the maximum number of
 connections, but extra connections will be queued instead of returning
 an error immediately.</p>
@@ -185,7 +188,12 @@ will install pgpool-II. (If you use Solaris or FreeBSD, replace make with gmake)
 If you are using PostgreSQL 8.0 or later, installing pgpool_regclass is strongly
 recommended, as it is used internally by pgpool-II.
 Without this, handling of duplicate table names in different schema
-might cause trouble (temporary tables aren't a problem).
+might cause trouble (temporary tables aren't a problem). 
+</p>
+<p>
+This installation procedure must be performed on every postgres server
+to which pgpool will connect in order to create and install the shared
+libraries required by the pgpool_regclass() stored procedure.
 </p>
 <p>
 </p><pre># cd pgpool-II-x.x.x/sql/pgpool-regclass
@@ -199,8 +207,15 @@ Executing pgpool-regclass.sql should be performed on every database accessed
 with pgpool-II.
 You do not need to do this for a database created after the
 execution of "psql -f pgpool-regclass.sql template1", as this template database
-will be cloned to create new databases.
+will be cloned to create new databases. Here is a shell script that
+will apply pgpool-regclass to every database except template0.
 </p>
+<pre>
+#!/bin/sh
+for db in `psql -Upostgres -t -c "select datname from pg_database where datname <> 'template0'"`; do
+    psql -f pgpool-regclass.sql $db
+done
+</pre>
 
 </dd><dt>Installing pgpool_walrecrunning</dt>
 <dd>
@@ -208,6 +223,11 @@ will be cloned to create new databases.
 If you are using PostgreSQL 9.0 or later along with streaming 
 replication, you need to install pgpool_walrecrunning function on all 
 PostgreSQL to be accessed by pgpool-II.
+</p>
+<p>
+This installation procedure must be performed on every postgres server
+to which pgpool will connect in order to create and install the shared
+libraries required by the pgpool_walrecrunning() stored procedure.
 </p>
 <p>
 </p><pre>cd pgpool-II-x.x.x/sql/pgpool-walrecrunning
@@ -220,8 +240,16 @@ psql -f pgpool-walrecrunning.sql template1
 Executing pgpool-walrecrunning.sql should be performed on every database accessed
 with pgpool-II.
 You do not need to do this for a database created after the
-execution of "psql -f pgpool-regclass.sql template1", as this template database
-will be cloned to create new databases.
+execution of "psql -f pgpool-walrecrunning.sql template1", as this template database
+will be cloned to create new databases. Here is a shell script that
+will apply pgpool-walrecrunning to every database except template0
+</p>
+<pre>
+#!/bin/sh
+for db in `psql -Upostgres -t -c "select datname from pg_database where datname <> 'template0'"`; do
+    psql -f pgpool-walrecrunning.sql $db
+done
+</pre>
 </p>
 
 </dd></dl>
@@ -328,7 +356,10 @@ control their behaviors.</p>
 <h2>Configuring <code>pcp.conf</code></h2>
 
 <p>pgpool-II provides a control interface where an administrator
-can collect pgpool-II status, and terminate pgpool-II processes remotely.
+can collect pgpool-II status, and terminate pgpool-II processes
+  remotely. This control interface is normally configured on port 9898
+  as configured in the pgpool.conf file. A web administration
+  interface  named <a href="http://pgfoundry.org/projects/pgpool/">pgpoolAdmin</a>
 <code>pcp.conf</code> is the user/password file used for
 authentication by this interface. All operation modes require the
 <code>pcp.conf</code> file to be set. A <code>$prefix/etc/pcp.conf.sample</code>
@@ -387,7 +418,9 @@ comment and will be ignored.</p>
       all incoming connections. <code>''</code> disables TCP/IP
       connections. Default is <code>'localhost'</code>. Connections via UNIX
       domain socket are always accepted. This parameter can only be set at
-      server start.</p>
+      server start. Unlike the listen_addresses directive in
+      Postgresql's postgres.conf file, multiple interfaces cannot be
+      specified. Choose one or all interfaces.</p>
   </dd>
       
   <dt>port</dt>
@@ -1589,7 +1622,7 @@ the standby without being asked for a password.
 </pre>
 
 </li><li>Install required C and SQL functions to perform online recovery
-	  into each DB nodes.
+into each postgres server to which pgpool will connect.
 <p></p>
 
 <pre># cd pgpool-II-x.x.x/sql/pgpool-recovery
@@ -2012,7 +2045,7 @@ are explained in the <a href="#pcp_node_info">pcp_node_info reference</a>.
 -------------+------+--------+-----------
  127.0.0.1   | 5432 | 2      | 0.5
  192.168.1.7 | 5432 | 3      | 0.5
-(2 lignes)
+(2 rows)
 </pre>
 <p></p>
 <h2>pool_processes</h2>
@@ -2039,7 +2072,7 @@ It has 6 columns:
  8467     | 2010-08-14 08:35:40 |          |           |                     | 
  8468     | 2010-08-14 08:35:40 |          |           |                     | 
  8469     | 2010-08-14 08:35:40 |          |           |                     | 
-(5 lines)
+(5 rows)
 </pre>
 <h2>pool_pools</h2>
 <p>"SHOW pool_pools" sends back a list of pools handled by pgPool-II.
@@ -2084,7 +2117,7 @@ It has 11 columns:
  8469     | 2010-08-14 08:35:40 | 1       | 0          |          |           |                     |              |              |              |                 | 
  8469     | 2010-08-14 08:35:40 | 2       | 0          |          |           |                     |              |              |              |                 | 
  8469     | 2010-08-14 08:35:40 | 3       | 0          |          |           |                     |              |              |              |                 | 
-(20 lines)
+(20 rows)
 </pre>
 <p></p>
 <h2>pool_version</h2>
