@@ -1,0 +1,6 @@
+This is a repository containing my modifications to the Pgpool II
+middleware application for Postgres. All of my modifications will be
+contributed back to the project maintainers for inclusion.
+
+Official documentation is at http://pgpool.projects.postgresql.org/
+Code is at http://pgfoundry.org/projects/pgpool/

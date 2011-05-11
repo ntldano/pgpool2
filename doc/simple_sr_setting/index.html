@@ -1,0 +1,325 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+<link rel="stylesheet" href="index_files/pgpool.css" type="text/css">
+<title>Simple Streaming replication setting with pgpool-II</title>
+</head>
+
+<!-- hhmts start -->
+<body>Last modified: Tue Jan 18 15:56:22 JST 2011
+<!-- hhmts end -->
+
+
+<h1>Simple Streaming replication setting with pgpool-II</h1>
+<h2>Overview</h2>
+<p>
+In this tutorial, I explain how to create a super-simple-toy streaming
+replication setting using pgpool-II step by step.  What you need is just
+a Linux box.  Onto the box I install two PostgreSQL instances, pgpool-II
+and pgpoolAdmin.
+</p>
+<p>
+Though the setting is super simple, it makes possible to implement important functionalities which PostgreSQL 9.0 lacks:
+</p>
+<ul>
+<li>Automated failover.
+If one of the two PostgreSQL goes down, pgpool-II will automatically let
+ remaining node take over and keep on providing database service to 
+applications.</li>
+<li>Query dispatching and load balancing.
+In streaming replication mode, applications need to carefully chose queries to be sent to standby node.
+Pgpool-II checks the query and automatically chose primary or standby node in sending queries.
+So applications need not to worry about it.
+</li>
+<li>Online recovery.
+Recover failed node without stopping pgpool-II and PostgreSQL.</li>
+</ul>
+<p></p>
+<p>
+Once you understand the setting described in this tutorial, you could 
+easily extend to a real-world setting: i.e. two dedicated DB servers 
+setting.
+</p>
+<p>
+Here is the overall picture of the installation.
+<a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/overview.png"><img src="index_files/overview-small.png"></a>
+</p>
+<p>
+Please note that in this figure port 5432 PostgreSQL is assigned to the 
+primary server and port 5433 PostgreSQL is assigned to the standby 
+server.
+This is just a initial setting and afterward you can interchange the 
+role of each PostgreSQL by using online recovery.
+</p>
+
+<h2>Installing PostgreSQL 9.0</h2>
+<p>
+The easiest way is downloading Linux package from <a href="http://www.postgresql.org/download/linux">PostgreSQL official site</a>.
+However usually Linux packages allow to start only 1 PostgreSQL 
+instance. So you need to disable automatic starting at the system 
+booting time and start PostgreSQL by hand using pg_ctl.
+</p>
+<p>
+Another way to install PostgreSQL is from the source code.
+This is surprisingly easy actually. Just unpack the tar ball and configure;make;make install.
+See the PostgreSQL manual for more details.
+</p>
+<p>
+From now on, I assume that database clusters are located at 
+/home/postgres/data and /home/postgres/standby and are owned by postgres
+ user:
+</p><pre>$ initdb -D /home/postgres/data
+$ initdb -D /home/postgres/standby
+</pre>
+<p></p>
+<p>
+Next add followings to /home/postgres/data/postgresql.conf and /home/postgres/standby/postgresql.conf.
+"logging_collector" and below are not really relevant to Streaming replication but 
+they are my favorites to make my life easier.
+You might want to remove "log_statement = 'all'" in production environment however.
+</p><pre>hot_standby = on
+wal_level = hot_standby
+max_wal_senders = 1
+logging_collector = on
+log_filename = '%A.log'
+log_line_prefix = '%p %t '
+log_truncate_on_rotation = on
+log_statement = 'all'
+</pre>
+<p></p>
+<p>
+Add following to /home/postgres/standby/postgresql.conf because we want to run standby PostgreSQL at 5433 port.
+</p><pre>port = 5433
+</pre>
+<p></p>
+<p>
+Put <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/pg_hba.conf">pg_hba.conf</a> to /home/postgres/data.
+Of course you need to replace "/some/where/" with actual directory where you downloaded the scripts.
+</p><pre>$ cp /some/where/pg_hba.conf" /home/postgres/data"
+</pre>
+<p></p>
+
+<p>
+Start PostgreSQL primary server.
+</p>
+<pre>$ pg_ctl -D /home/postgres/data start
+</pre>
+<h2>Installing pgpool-II</h2>
+<p>
+In this configuration you need to install to-be-released-as-3.1 version of pgpool-II.
+Here is the <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/pgpool-II-3.1.0-alpha1.tar.gz">tar ball</a>.
+</p>
+<p>
+Do followings as whatever user you like. Typically "postgres" user is preferred.
+"install-functions.sh" can be downloaded <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/install-functions.sh">here</a>.
+Of course you need to replace "/some/where/" with actual directory where you downloaded the scripts.
+</p>
+<pre>$ tar xfz /some/where/pgpool-II-3.1.0-alpha1.tar.gz
+$ cd pgpool-II-3.1-alpha
+$ ./configure
+$ make
+$ sudo make install
+$ cp /some/where/install-functions.sh .
+$ sh install-functions.sh
+</pre>
+
+<p>
+Next you need to install pgpool-II configuration files.
+The main configuration file is <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/pgpool.conf">pgpool.conf</a>.
+The other one is the <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/pcp.conf">pcp.conf</a>.
+You will need to execute followings as root.
+</p><pre># cp /some/where/pgpool.conf /usr/local/etc
+# chown apache /usr/local/etc/pgpool.conf
+# cp /some/where/pcp.conf /usr/local/etc
+# chown apache /usr/local/etc/pcp.conf
+</pre>
+<p>
+The reason why we execute chown is, pgpoolAdmin need to modify those 
+files.
+pgpoolAdmin is a PHP script thus executed by Apache.
+If you have no plan to use pgpoolAdmin(that measn you want to use pcp 
+command line admin tools only), you do not need to execute chown.
+</p>
+<p>
+<strong>The initial password for "postgres" in the pcp.conf is "pgpoolAdmin".
+I strongly recommend to change the password immediately after finishing the installation.
+The new password string can be obtained using pg_md5 command.
+See the <a href="http://pgpool.projects.postgresql.org/pgpool-II/doc/pgpool-en.html#config">pgpool-II doc</a> for more details.
+</strong>
+</p>
+<p>
+Install <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/basebackup.sh">basebackup.sh</a> and <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/pgpool_remote_start">pgpool_remote_start</a>, neccessary for online recovery.
+Note that in pgpool_remote_start the path to pg_ctl command is specified.
+You might want to change it to an appropreate path according to your PostgreSQL installation.
+</p>
+<pre>$ cp /some/where/baseback.sh /home/postgres/data
+$ chmod 755 basebackup.sh
+$ cp /some/where/pgpool_remote_start /home/postgres/data
+$ chmod 755 pgpool_remote_start
+</pre>
+<p>
+Install <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/failover.sh">failover.sh</a> for automatic failover.
+</p>
+<pre>$ sudo cp /some/where/failover.sh /usr/local/etc
+$ chmod 755 failover.sh
+</pre>
+<p></p>
+<p>
+Create neccessary directories. Execute followings as root.
+The reason why we use chown is, pgpool-II is started by pgpoolAdmin.
+If you do not have a plan to use pgpoolAdmin, you need to change "apache" to the user you want to invoke pgpool-II.
+</p><pre># mkdir /var/run/pgpool
+# chown apache /var/run/pgpool
+# mkdir /var/log/pgpool
+# chown apache /var/log/pgpool
+# mkdir /var/log/pgpool/trigger
+# chmod 777 /var/log/pgpool/trigger
+</pre>
+
+<p>
+Create apache user.
+</p><pre>$ createuser apache
+Shall the new role be a superuser? (y/n) n
+Shall the new role be allowed to create databases? (y/n) n
+Shall the new role be allowed to create more new roles? (y/n) n
+</pre>
+<p></p>
+
+<h2>Installing pgpoolAdmin</h2>
+<p>
+pgpoolAdmin is a management tool for pgpool-II written in PHP.
+pgpoolAdmin must be executed on the same host which pgpool-II is running on.
+This effectively means that pgpoolAdmin does not work on Windows platform.
+pgpoolAdmin runs on PHP 4.2 or higher. It also needs PostgreSQL extention.
+If you plan to build PHP, please include --with-pgsql option.
+If you plan to install PHP from rpm. you may need to install PostgreSQL extension as well.
+Some distributions have built-in support for PostgreSQL extention, but most distributions do not.
+</p>
+<p>
+pgpoolAdmin has its own installer thus it is pretty easy to install pgpoolAdmin.
+In this configuration you need to install <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/pgpoolAdmin-3.0.2.tar.gz">to-be-released-as-3.0.2 version of pgpoolAdmin</a>.
+Unpack it under Apache document directory(for example, /var/www/html/).
+Follow <a href="http://pgpool.projects.postgresql.org/pgpoolAdmin/doc/en/install.html">the install instruction</a>, located at doc/install/install.html.
+Here are several key points before installing pgpoolAdmin by using Web installer.
+</p><pre># cd /var/www/html/pgpoolAdmin-3.0.2
+# chmod 777 templates_c
+# chown apache conf/pgmgt.conf.php
+# chmod 644 conf/pgmgt.conf.php
+</pre>
+<p></p>
+<p>
+Once you are prepared, brows the pgpoolAdmin install using your favorite Web browser.
+In this example, the URL will be <a href="http://localhost/pgpoolAdmin-3.0.2/install/index.php">http://localhost/pgpoolAdmin-3.0.2/install/index.php</a>.
+You will see <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/install_images/1.png">this page</a>.
+Click "Next" and you will see this <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/install_images/2.png">this page</a>.
+Please make sure that all items are checked by green. This indicates that everytyhing is good.
+Click "Next".
+This is the main setting page.
+Several points you want to change from default values:
+</p><ul>
+<li>Check "don't run in daemon mode". This is neccessary to get pgpool log.</li>
+<li>Chose stop mode "fast". The default value "smart" will not allow you
+ to stop pgpool until all clients are disconnected and I feel this is 
+annoying for test envrionment.</li>
+<li>set "pgpool Logfile" to "|/usr/sbin/rotatelogs2 -l -f 
+/var/log/pgpool/pgpool.log.%A 86400".
+This allows to place pgpool log files under /var/log/pgpool/ and rotate 
+them once a day by using rotatelogs2 coming with apache2.</li>
+<li>Set "Refresh Time" to 10. PgpoolAdmin will check pgpool-II status 
+every 10 seconds and refresh pages. This is extremly convenient for test
+ enverionments.
+</li></ul>
+<p></p>
+<p>
+Once you've done, the page should look like <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/install_images/4.png">this</a>.
+You finished to install pgpoolAdmin. Conguratulations!
+</p>
+<h2>Starting pgpool-II</h2>
+<p>
+
+Login to pgpoolAdmin and start pgpool-II from <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/operation_images/01.png">"pgpool status" menu</a>.
+You see port 5432 PostgreSQL is <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/operation_images/02.png">running as a primary server</a>.
+You should be able to connect to port 9999 by using psql.
+Let's try to create a table.
+</p>
+<pre>$ createdb -p 9999 test
+$ psql -p 9999 test
+test=# create table t1(i int);
+CREATE TABLE
+test=# 
+</pre>
+<p>
+You will find something like this in the pgpool log.
+</p><pre>$ tail /var/log/pgpool/pgpool.log.Wednesday
+2010-11-03 23:12:55 LOG:   pid 4148: DB node id: 0 backend pid: 4607 statement: create table t1(i int);
+</pre>
+<p></p>
+<p>
+You will see same thing in the PostgreSQL log as well.
+</p><pre>$ tail /home/postgres/data/pg_log/Wednesday.log
+4607 2010-11-03 23:12:55 JST LOG:  statement: create table t1(i int);
+</pre>
+<p></p>
+
+<h2>Starting standby server</h2>
+<p>
+At this point standby server is not running.
+To start standby server, just click "Recovery" button.
+"basebackup.sh" will be executed and the standby server will be <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/operation_images/03.png">automatically started</a>.
+</p>
+<p>
+Once standby server is running, streaming replication starts.
+Let's insert some data into t1.
+</p><pre>-- insert into t1 via pgpool-II.
+-- it will be executed on primary server
+psql -p 9999 test
+test=# insert into t1 values(1);
+test=# \q
+psql -p 5433 test
+-- now connected to standby server
+test=# select * from t1;
+ i 
+---
+ 1
+(1 row)
+</pre>
+<p></p>
+<h2>What if standby server goes down?</h2>
+<p>
+If standby goes down, it is disconnected from pgpool-II.
+Users can issue SQL via pgpool-II as usual.
+Just streaming replication is stopped.
+To recover standby server, click "Recovery" button.
+</p>
+
+<h2>What if primary server goes down?</h2>
+<p>
+Don't panic. Standby server is there for this situation.
+</p><pre>$ pg_ctl -D /home/postgres/data -m f stop
+</pre>
+<p></p>
+<p>
+As you can see, port 5432 PostgreSQL goes down and <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/operation_images/04.png">5433 PostgreSQL takes over the primary role</a>.
+When pgpool-II finds that primary is going down it executes failover script(failover.sh).
+The script creates trigger file as /var/log/pgpool/trigger/trigger1.
+Standby server finds the file and decides to promote to primary.
+If you click the "Recovery" button of 5432 PostgreSQL, the former primary server will be <a href="http://pgpool.projects.postgresql.org/contrib_docs/simple_sr_setting/operation_images/05.png">recovered as standby server</a>.
+</p>
+
+<h2>Summary</h2>
+<p>
+PostgreSQL 9.0 supports simple and easy to use built-in replication system.
+Adding pgpool-II on top of the replication system it is possible to build
+a high availability(HA) system.
+</p>
+<p>
+If you have questions and/or comments, please post to <a href="http://pgfoundry.org/mailman/listinfo/pgpool-general">pgpool-general mailing list</a>.
+</p>
+<p>
+Tatsuo Ishii
+<br>
+ishii at sraoss.co.jp
+</p>
+
+
+</body></html>
